@@ -1,0 +1,40 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+
+    // private rooms are named dm_<uidA>_<uidB>; only those two users may enter
+    function inRoom(roomId) {
+      return !roomId.matches('dm_.*') || request.auth.uid in roomId.split('_');
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 24;
+    }
+
+    match /rooms/{roomId}/messages/{msgId} {
+      allow read: if signedIn() && inRoom(roomId);
+      allow create: if signedIn() && inRoom(roomId)
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.text is string
+        && request.resource.data.text.size() <= 1000
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 24
+        && (!('audio' in request.resource.data)
+            || request.resource.data.audio == null
+            || request.resource.data.audio.size() < 400000);
+      allow update: if signedIn() && inRoom(roomId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tr']);
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /reports/{id} {
+      allow create: if signedIn() && request.resource.data.by == request.auth.uid;
+    }
+  }
+}

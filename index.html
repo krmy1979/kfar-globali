@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>כפר גלובלי — שיחות בלי מחסום שפה</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- מסך כניסה -->
+<div id="boot" class="boot" role="status"><span class="spinner" aria-hidden="true"></span><p id="bootMsg"></p><button class="btn" id="bootRetry" type="button" hidden></button></div>
+
+<section id="join" class="join" hidden>
+  <div class="join-card">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span data-t="appName"></span></div>
+    <h1 data-t="joinTitle"></h1>
+    <p class="lede" data-t="joinLede"></p>
+    <form id="joinForm" novalidate>
+      <label class="field">
+        <span data-t="yourLang"></span>
+        <select id="joinLang"></select>
+      </label>
+      <label class="field">
+        <span data-t="yourName"></span>
+        <input id="joinName" type="text" maxlength="24" dir="auto" autocomplete="nickname">
+        <small class="err" id="nameErr" hidden></small>
+      </label>
+      <label class="check">
+        <input id="joinAgree" type="checkbox">
+        <span data-t="agree"></span>
+      </label>
+      <small class="err" id="agreeErr" hidden></small>
+      <button class="btn primary" type="submit" data-t="enter"></button>
+    </form>
+    <ul class="rules">
+      <li data-t="rule1"></li><li data-t="rule2"></li><li data-t="rule3"></li>
+    </ul>
+  </div>
+</section>
+
+<!-- האפליקציה -->
+<div id="app" class="app" hidden>
+  <aside class="side" id="side">
+    <header class="side-head">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span data-t="appName"></span></div>
+      <button class="me" id="meBtn" type="button" title="">
+        <span class="avatar" id="meAvatar"></span>
+        <span class="me-txt"><b id="meName"></b><small id="meLang"></small></span>
+      </button>
+    </header>
+    <nav class="rooms" aria-label="rooms">
+      <h2 data-t="rooms"></h2>
+      <ul id="roomList"></ul>
+      <h2 data-t="people"></h2>
+      <ul id="peopleList"></ul>
+      <p class="hint" id="peopleEmpty" data-t="peopleEmpty" hidden></p>
+    </nav>
+    <p class="demo-note" id="sideNote"></p>
+  </aside>
+
+  <main class="chat" id="chat">
+    <header class="chat-head">
+      <button class="icon-btn back" id="backBtn" type="button" aria-label="back">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="chat-title"><h1 id="roomName"></h1><p id="roomDesc"></p></div>
+      <span class="lang-chip" id="langChip"></span>
+    </header>
+    <div class="msgs" id="msgs" aria-live="polite"></div>
+    <div class="empty" id="empty" hidden>
+      <h2 data-t="emptyTitle"></h2><p data-t="emptyText"></p>
+    </div>
+    <form class="composer" id="composer">
+      <button class="icon-btn mic" id="micBtn" type="button">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V7a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm-6-3a6 6 0 0 0 12 0M12 18v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span class="rec-time" id="recTime" hidden>0:00</span>
+      </button>
+      <textarea id="input" rows="1" maxlength="1000"></textarea>
+      <button class="btn primary send" id="sendBtn" type="submit" disabled data-t="send"></button>
+    </form>
+    <p class="toast" id="toast" role="status" hidden></p>
+  </main>
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/store-local.js"></script>
+<script src="js/store-firebase.js"></script>
+<script src="js/translate.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
