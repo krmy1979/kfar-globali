@@ -212,9 +212,9 @@
   let rec = null;
   const MAX_AUDIO_BYTES = 270000;   // נכנס במגבלת המסמך בשרת אחרי קידוד base64
   function pickMime() {
-    // mp4/AAC מתנגן גם ב-Chrome וגם בספארי; webm הוא ברירת המחדל כשאין תמיכה
-    const prefs = ['audio/mp4;codecs=mp4a.40.2', 'audio/webm;codecs=opus', 'audio/mp4'];
-    return prefs.find(m => self.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+    // webm/opus הוא הפורמט היציב ב-Chrome ובאנדרואיד. בספארי אין אותו, ושם משאירים לדפדפן לבחור (mp4).
+    const ok = m => self.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m);
+    return ok('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : ok('audio/webm') ? 'audio/webm' : '';
   }
   $('micBtn').onclick = async () => {
     if (rec) return rec.stop();
@@ -222,12 +222,13 @@
     let stream;
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
     catch { return toast(t('micDenied')); }
-    const mime = pickMime(), opts = { audioBitsPerSecond: 24000 };
-    if (mime) opts.mimeType = mime;
+    const mime = pickMime();
     let mr;
-    try { mr = new MediaRecorder(stream, opts); } catch { mr = new MediaRecorder(stream); }
+    try { mr = mime ? new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 24000 }) : new MediaRecorder(stream); }
+    catch { mr = new MediaRecorder(stream); }
+    mr.onerror = e => { console.warn('recorder', e.error || e); toast(t('recError')); };
     const chunks = [], t0 = Date.now(), sendRoom = room;
-    let bytes = 0, transcript = '', sr = null, srDone = null;
+    let bytes = 0, transcript = '', sr = null, srDone = null, srTrack = null;
 
     /* זיהוי דיבור: מאזין לאותו ערוץ מיקרופון של ההקלטה (כשהדפדפן תומך), כולל תוצאות ביניים */
     const SR = self.SpeechRecognition || self.webkitSpeechRecognition;
@@ -237,7 +238,9 @@
         sr.onresult = ev => { transcript = [...ev.results].map(r => r[0].transcript).join(' '); };
         sr.onerror = () => {};
         srDone = new Promise(res => { sr.onend = res; });
-        try { sr.start(stream.getAudioTracks()[0]); } catch { sr.start(); }
+        /* נותנים לזיהוי עותק של ערוץ המיקרופון, כדי שסיום הזיהוי לא יעצור את ההקלטה עצמה */
+        try { srTrack = stream.getAudioTracks()[0].clone(); sr.start(srTrack); }
+        catch { if (srTrack) { srTrack.stop(); srTrack = null; } sr.start(); }
       } catch { sr = null; srDone = null; }
     }
     const tick = setInterval(() => {
@@ -260,6 +263,7 @@
         if (!tooShort) { toast(t('transcribing')); await Promise.race([srDone, new Promise(r => setTimeout(r, 4000))]); }
       }
       stream.getTracks().forEach(tr => tr.stop());
+      if (srTrack) srTrack.stop();
       if (tooShort) return;
       const blob = new Blob(chunks, { type: mr.mimeType || mime || 'audio/webm' });
       let audio = blob.size && blob.size <= MAX_AUDIO_BYTES * 1.05 ? await new Promise(res => {
