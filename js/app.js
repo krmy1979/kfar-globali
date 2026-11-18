@@ -127,13 +127,30 @@
     const s = document.createElement('span'); s.textContent = langOf(m.lang).name + ' · ' + fmtTime(m.ts);
     meta.append(b, s);
     const bub = document.createElement('div'); bub.className = 'bubble';
-    if (m.audio) { const a = document.createElement('audio'); a.controls = true; a.src = m.audio; a.preload = 'metadata'; bub.append(a); }
+    if (m.audio) bub.append(buildAudio(m.audio));
     const main = document.createElement('div'); main.className = 'main'; main.dir = 'auto';
     const orig = document.createElement('div'); orig.className = 'orig'; orig.dir = 'auto'; orig.hidden = true;
     bub.append(main, orig);
     const act = document.createElement('div'); act.className = 'msg-actions';
     el.append(meta, bub, act);
     return el;
+  }
+  function buildAudio(dataUrl) {
+    const a = document.createElement('audio'); a.controls = true; a.preload = 'auto';
+    try {
+      const [head, b64] = dataUrl.split(','), bin = atob(b64), buf = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      a.src = URL.createObjectURL(new Blob([buf], { type: (head.match(/data:([^;,]+)/) || [])[1] || 'audio/webm' }));
+    } catch { a.src = dataUrl; }
+    /* הקלטות מהדפדפן נשמרות בלי אורך; בלי התיקון הזה הלחיצה הראשונה על פליי שותקת */
+    a.addEventListener('loadedmetadata', () => {
+      if (a.duration !== Infinity && !Number.isNaN(a.duration)) return;
+      const back = () => { a.removeEventListener('timeupdate', back); a.currentTime = 0; };
+      a.addEventListener('timeupdate', back);
+      try { a.currentTime = 1e7; } catch {}
+    }, { once: true });
+    a.addEventListener('error', () => { a.replaceWith(Object.assign(document.createElement('div'), { className: 'state', textContent: t('audioUnsupported') })); }, { once: true });
+    return a;
   }
   function link(label, fn, strong) {
     const b = document.createElement('button'); b.type = 'button';
@@ -193,41 +210,69 @@
 
   /* ---------- הודעה קולית: הקלטה + תמלול בדפדפן ---------- */
   let rec = null;
+  const MAX_AUDIO_BYTES = 270000;   // נכנס במגבלת המסמך בשרת אחרי קידוד base64
+  function pickMime() {
+    // mp4/AAC מתנגן גם ב-Chrome וגם בספארי; webm הוא ברירת המחדל כשאין תמיכה
+    const prefs = ['audio/mp4;codecs=mp4a.40.2', 'audio/webm;codecs=opus', 'audio/mp4'];
+    return prefs.find(m => self.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+  }
   $('micBtn').onclick = async () => {
     if (rec) return rec.stop();
+    if (!navigator.mediaDevices || !self.MediaRecorder) return toast(t('micDenied'));
     let stream;
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
     catch { return toast(t('micDenied')); }
-    const chunks = [], mr = new MediaRecorder(stream, { audioBitsPerSecond: 24000 }), t0 = Date.now();
-    let transcript = '', sr = null;
+    const mime = pickMime(), opts = { audioBitsPerSecond: 24000 };
+    if (mime) opts.mimeType = mime;
+    let mr;
+    try { mr = new MediaRecorder(stream, opts); } catch { mr = new MediaRecorder(stream); }
+    const chunks = [], t0 = Date.now(), sendRoom = room;
+    let bytes = 0, transcript = '', sr = null, srDone = null;
+
+    /* זיהוי דיבור: מאזין לאותו ערוץ מיקרופון של ההקלטה (כשהדפדפן תומך), כולל תוצאות ביניים */
     const SR = self.SpeechRecognition || self.webkitSpeechRecognition;
     if (SR) {
       try {
-        sr = new SR(); sr.lang = langOf(me.lang).speech; sr.continuous = true;
+        sr = new SR(); sr.lang = langOf(me.lang).speech; sr.continuous = true; sr.interimResults = true;
         sr.onresult = ev => { transcript = [...ev.results].map(r => r[0].transcript).join(' '); };
-        sr.onerror = () => {}; sr.start();
-      } catch { sr = null; }
+        sr.onerror = () => {};
+        srDone = new Promise(res => { sr.onend = res; });
+        try { sr.start(stream.getAudioTracks()[0]); } catch { sr.start(); }
+      } catch { sr = null; srDone = null; }
     }
     const tick = setInterval(() => {
-      const s = Math.floor((Date.now() - t0) / 1000);
-      $('recTime').textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
-      if (s >= 30) mr.stop();
+      const sec = Math.floor((Date.now() - t0) / 1000);
+      $('recTime').textContent = Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+      if (sec >= 30 && mr.state === 'recording') mr.stop();
     }, 250);
-    mr.ondataavailable = e => chunks.push(e.data);
-    mr.onstop = () => {
-      clearInterval(tick); stream.getTracks().forEach(tr => tr.stop());
-      if (sr) try { sr.stop(); } catch {}
-      rec = null; setRec(false);
-      if (Date.now() - t0 < 700) return;
-      const fr = new FileReader();
-      fr.onload = () => setTimeout(() => {
-        let audio = fr.result;
-        if (audio.length > 380000) { audio = null; toast(t('audioTooBig')); if (!transcript.trim()) return; }
-        guard(Store.send(room, { uid: me.id, name: me.name, lang: me.lang, text: transcript.trim(), audio }), t('sendFail'));
-      }, sr ? 600 : 0);
-      fr.readAsDataURL(new Blob(chunks, { type: mr.mimeType }));
+    mr.ondataavailable = e => {
+      if (!e.data || !e.data.size) return;
+      chunks.push(e.data); bytes += e.data.size;
+      if (bytes > MAX_AUDIO_BYTES && mr.state === 'recording') mr.stop();
     };
-    rec = mr; mr.start(); setRec(true);
+    mr.onstop = async () => {
+      clearInterval(tick);
+      rec = null; setRec(false);
+      const tooShort = Date.now() - t0 < 700;
+      /* מחכים שזיהוי הדיבור יסיים להחזיר את המילים האחרונות (עד 4 שניות) לפני השליחה */
+      if (sr) {
+        try { sr.stop(); } catch {}
+        if (!tooShort) { toast(t('transcribing')); await Promise.race([srDone, new Promise(r => setTimeout(r, 4000))]); }
+      }
+      stream.getTracks().forEach(tr => tr.stop());
+      if (tooShort) return;
+      const blob = new Blob(chunks, { type: mr.mimeType || mime || 'audio/webm' });
+      let audio = blob.size && blob.size <= MAX_AUDIO_BYTES * 1.05 ? await new Promise(res => {
+        const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => res(null); fr.readAsDataURL(blob);
+      }) : null;
+      if (audio && audio.length > 395000) audio = null;
+      const text = transcript.replace(/\s+/g, ' ').trim();
+      if (!audio && !text) return toast(t('voiceEmpty'));
+      if (!audio) toast(t('audioTooBig'));
+      else if (!text) toast(t('voiceNoText'));
+      guard(Store.send(sendRoom, { uid: me.id, name: me.name, lang: me.lang, text, audio }), t('sendFail'));
+    };
+    rec = mr; mr.start(1000); setRec(true);
   };
   function setRec(on) {
     $('micBtn').classList.toggle('rec', on); $('recTime').hidden = !on; $('recTime').textContent = '0:00';
