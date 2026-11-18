@@ -210,6 +210,10 @@
 
   /* ---------- הודעה קולית: הקלטה + תמלול בדפדפן ---------- */
   let rec = null;
+  /* זיהוי דיבור בזמן הקלטה עובד רק בדפדפני Chromium (Chrome, Edge) שאינם באייפון.
+     באייפון ובספארי שני הדברים מתחרים על המיקרופון וההקלטה נקטעת, ולכן שם מקליטים בלי זיהוי. */
+  const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const LIVE_STT = !!self.chrome && !IS_IOS && !!(self.SpeechRecognition || self.webkitSpeechRecognition);
   const MAX_AUDIO_BYTES = 270000;   // נכנס במגבלת המסמך בשרת אחרי קידוד base64
   function pickMime() {
     // webm/opus הוא הפורמט היציב ב-Chrome ובאנדרואיד. בספארי אין אותו, ושם משאירים לדפדפן לבחור (mp4).
@@ -224,14 +228,15 @@
     catch { return toast(t('micDenied')); }
     const mime = pickMime();
     let mr;
-    try { mr = mime ? new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 24000 }) : new MediaRecorder(stream); }
+    try { mr = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 24000 } : { audioBitsPerSecond: 32000 }); }
     catch { mr = new MediaRecorder(stream); }
-    mr.onerror = e => { console.warn('recorder', e.error || e); toast(t('recError')); };
+    let recErr = '';
+    mr.onerror = e => { recErr = (e.error && e.error.name) || 'error'; console.warn('recorder', e.error || e); };
     const chunks = [], t0 = Date.now(), sendRoom = room;
     let bytes = 0, transcript = '', sr = null, srDone = null, srTrack = null;
 
     /* זיהוי דיבור: מאזין לאותו ערוץ מיקרופון של ההקלטה (כשהדפדפן תומך), כולל תוצאות ביניים */
-    const SR = self.SpeechRecognition || self.webkitSpeechRecognition;
+    const SR = LIVE_STT && (self.SpeechRecognition || self.webkitSpeechRecognition);
     if (SR) {
       try {
         sr = new SR(); sr.lang = langOf(me.lang).speech; sr.continuous = true; sr.interimResults = true;
@@ -262,6 +267,7 @@
         try { sr.stop(); } catch {}
         if (!tooShort) { toast(t('transcribing')); await Promise.race([srDone, new Promise(r => setTimeout(r, 4000))]); }
       }
+      const trackState = (stream.getAudioTracks()[0] || {}).readyState || '?';
       stream.getTracks().forEach(tr => tr.stop());
       if (srTrack) srTrack.stop();
       if (tooShort) return;
@@ -271,7 +277,11 @@
       }) : null;
       if (audio && audio.length > 395000) audio = null;
       const text = transcript.replace(/\s+/g, ' ').trim();
-      if (!audio && !text) return toast(t('voiceEmpty'));
+      if (!audio && !text) {
+        /* פרטי אבחון קצרים, כדי שאפשר יהיה לדעת למה ההקלטה נכשלה */
+        const info = [((Date.now() - t0) / 1000).toFixed(1) + 's', blob.size + 'B', (mr.mimeType || '?').split(';')[0], recErr || trackState, IS_IOS ? 'ios' : self.chrome ? 'cr' : 'other'].join(' · ');
+        return toast(t(recErr ? 'recError' : 'voiceEmpty') + ' [' + info + ']', 12000);
+      }
       if (!audio) toast(t('audioTooBig'));
       else if (!text) toast(t('voiceNoText'));
       guard(Store.send(sendRoom, { uid: me.id, name: me.name, lang: me.lang, text, audio }), t('sendFail'));
@@ -288,7 +298,7 @@
   /* פעולות מול השרת מחזירות Promise — אם נכשלו, מודיעים למשתמש */
   function guard(p, msg) { if (p && p.catch) p.catch(e => { console.warn(e); toast(msg || t('sendFail')); }); }
   let toastT;
-  function toast(msg) { const el = $('toast'); el.textContent = msg; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { el.hidden = true; }, 3500); }
+  function toast(msg, ms) { const el = $('toast'); el.textContent = msg; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { el.hidden = true; }, ms || 3500); }
   Store.onFull(() => toast(t('storageFull')));
   Store.subscribe(r => {
     if (!me) return;
